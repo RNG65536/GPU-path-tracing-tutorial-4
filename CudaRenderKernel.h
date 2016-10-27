@@ -33,10 +33,20 @@
 
 #define scrwidth 1280
 #define scrheight 720
+// #define scrwidth 640
+// #define scrheight 360
+// #define scrwidth 512
+// #define scrheight 512
+// #define scrwidth 256
+// #define scrheight 256
+// #define scrwidth 1024
+// #define scrheight 576
+// #define scrwidth 512
+// #define scrheight 288
 
 void cudaRender(const float4* cudaNodes, const float4* cudaTriWoops, const float4* cudaDebugTris, const int* cudaTriInds, 
 	Vec3f* outputbuf, Vec3f* accumbuf, const float4* HDRmap, const unsigned int framenumber, const unsigned int hashedframenumber, 
-	const unsigned int totalnodecnt, const unsigned int leafnodecnt, const unsigned int tricnt, const Camera* cudaRenderCam);
+	const unsigned int totalnodecnt, const unsigned int leafnodecnt, const unsigned int tricnt, const Camera* cudaRenderCam, int debugFlags);
 
 //------------------------------------------------------------------------
 // Constants.

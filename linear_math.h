@@ -55,7 +55,10 @@ struct Vec3f
 		float _v[3];
 	};
 
-	__host__ __device__ Vec3f(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+// 	__host__ __device__ Vec3f(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+    __host__ __device__ Vec3f() : x(0), y(0), z(0) {}
+	explicit __host__ __device__ Vec3f(float a) : x(a), y(a), z(a) {}
+    __host__ __device__ Vec3f(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
 	__host__ __device__ Vec3f(const Vec3f& v) : x(v.x), y(v.y), z(v.z) {}
 	inline __host__ __device__ float length(){ return sqrtf(x*x + y*y + z*z); }
 	// sometimes we dont need the sqrt, we are just comparing one length with another

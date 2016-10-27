@@ -542,16 +542,38 @@ void load_object(const char *filename)
 			pCurrentTriangle = triangles;
 
 			std::cout << "total vertices: " << totalVertices << "\n";
-			std::cout << "total triangles: " << totalTriangles << "\n";
+            std::cout << "total triangles: " << totalTriangles << "\n";
+
+            // calc vertex normals
+            std::vector<Vec3f> normals;
+            {
+                normals.resize(mesh.verts.size());
+                normals.assign(mesh.verts.size(), Vec3f(0, 0, 0));
+                for (auto& f : mesh.faces) {
+                    Vec3f va = mesh.verts[f.x - 1];
+                    Vec3f vb = mesh.verts[f.y - 1];
+                    Vec3f vc = mesh.verts[f.z - 1];
+                    Vec3f fn = cross(vb - va, vc - va);
+                    normals[f.x - 1] += fn;
+                    normals[f.y - 1] += fn;
+                    normals[f.z - 1] += fn;
+                }
+                for (auto& n : normals) {
+                    n.normalize();
+                }
+            }
 
 			for (int i = 0; i < totalVertices; i++){
 				Vec3f currentvert = mesh.verts[i];
 				pCurrentVertex->x = currentvert.x;
 				pCurrentVertex->y = currentvert.y;
 				pCurrentVertex->z = currentvert.z;
-				pCurrentVertex->_normal.x = 0.f; // not used for now, normals are computed on-the-fly by GPU
-				pCurrentVertex->_normal.y = 0.f; // not used 
-				pCurrentVertex->_normal.z = 0.f; // not used 
+// 				pCurrentVertex->_normal.x = 0.f; // not used for now, normals are computed on-the-fly by GPU
+// 				pCurrentVertex->_normal.y = 0.f; // not used 
+// 				pCurrentVertex->_normal.z = 0.f; // not used 
+                pCurrentVertex->_normal.x = normals[i].x; // not used for now, normals are computed on-the-fly by GPU
+                pCurrentVertex->_normal.y = normals[i].y; // not used 
+                pCurrentVertex->_normal.z = normals[i].z; // not used 
 
 				pCurrentVertex++;
 			}
@@ -637,7 +659,8 @@ float processgeo(){
 	maxi = std::max(maxi, (float)fabs(maxp.y));
 	maxi = std::max(maxi, (float)fabs(maxp.z));
 
-	std::cout << "Scaling factor: " << (MaxCoordAfterRescale / maxi) << "\n";
+// 	std::cout << "Scaling factor: " << (MaxCoordAfterRescale / maxi) << "\n";
+	std::cout << "Scaling factor: " << (0.018) << "\n";
 	std::cout << "Center origin: " << origCenter.x << " " << origCenter.y << " " << origCenter.z << "\n";
 
 	std::cout << "\nCentering and scaling vertices..." << std::endl;
@@ -645,7 +668,8 @@ float processgeo(){
 		vertices[i] -= origCenter;
 		//vertices[i].y += origCenter.y;
 		//vertices[i] *= (MaxCoordAfterRescale / maxi);
-		vertices[i] *= 20; // 0.25
+// 		vertices[i] *= 20; // 0.25
+        vertices[i] *= 0.018;
 	}
 
 	return MaxCoordAfterRescale;

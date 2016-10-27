@@ -1,5 +1,6 @@
 // code for depth-of-field, mouse + keyboard user interaction based on https://github.com/peterkutz/GPUPathTracer
 #include <math.h>
+#include <fstream>
 #include "Camera.h"
 #include "CudaRenderKernel.h"
 
@@ -9,11 +10,24 @@ InteractiveCamera::InteractiveCamera()
 	yaw = 0;
 	pitch = 0.3;
 	radius = 4;
-	apertureRadius = 0.04; 
+// 	apertureRadius = 0.04; 
+	apertureRadius = 0; 
 	focalDistance = 4.0f;
 
 	resolution = Vec2f(scrwidth, scrheight);  
 	fov = Vec2f(40, 40);
+
+    std::ifstream ifs("camera.txt");
+    ifs >> centerPosition.x >> centerPosition.y >> centerPosition.z;
+    ifs >> yaw >> pitch >> radius;
+    ifs.close();
+}
+
+void InteractiveCamera::saveCamera() {
+    std::ofstream ofs("camera.txt");
+    ofs << centerPosition.x << " " << centerPosition.y << " " << centerPosition.z << " ";
+    ofs << yaw << " " << pitch << " " << radius;
+    ofs.close();
 }
 
 InteractiveCamera::~InteractiveCamera() {}

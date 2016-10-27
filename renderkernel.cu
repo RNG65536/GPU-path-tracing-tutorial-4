@@ -20,13 +20,17 @@
 #define F32_MIN          (1.175494351e-38f)
 #define F32_MAX          (3.402823466e+38f)
 
-#define HDRwidth 3200
-#define HDRheight 1600
+// #define HDRwidth 3200
+// #define HDRheight 1600
+// #define HDRwidth 1000
+// #define HDRheight 500
+#define HDRwidth 512
+#define HDRheight 256
 #define HDR
 #define EntrypointSentinel 0x76543210
 #define MaxBlockHeight 6
 
-enum Refl_t { DIFF, METAL, SPEC, REFR, COAT };  // material types
+enum Refl_t { DIFF, METAL, SPEC, REFR, COAT, VOLUME, BSSRDF };  // material types
 
 // CUDA textures containing scene data
 texture<float4, 1, cudaReadModeElementType> bvhNodesTexture;
@@ -67,14 +71,14 @@ __constant__ Sphere spheres[] = {
 	// sun
 	//{ 10000, { 50.0f, 40.8f, -1060 }, { 0.3, 0.3, 0.3 }, { 0.175f, 0.175f, 0.25f }, DIFF }, // sky   0.003, 0.003, 0.003	
 	//{ 4.5, { 0.0f, 12.5, 0 }, { 6, 4, 1 }, { .6f, .6f, 0.6f }, DIFF },  /// lightsource	
-	{ 10000.02, { 50.0f, -10001.35, 0 }, { 0.0, 0.0, 0 }, { 0.3f, 0.3f, 0.3f }, DIFF }, // ground  300/-301.0
+	{ 0*10000.02, { 50.0f, -10001.35, 0 }, { 0.0, 0.0, 0 }, { 0.3f, 0.3f, 0.3f }, DIFF }, // ground  300/-301.0
 	//{ 10000, { 50.0f, -10000.1, 0 }, { 0, 0, 0 }, { 0.3f, 0.3f, 0.3f }, DIFF }, // double shell to prevent light leaking
 	//{ 110000, { 50.0f, -110048.5, 0 }, { 3.6, 2.0, 0.2 }, { 0.f, 0.f, 0.f }, DIFF },  // horizon brightener
 	
 	//{ 0.5, { 30.0f, 180.5, 42 }, { 0, 0, 0 }, { .6f, .6f, 0.6f }, DIFF },  // small sphere 1  
 	//{ 0.8, { 2.0f, 0.f, 0 }, { 0.0, 0.0, 0.0 }, { 0.8f, 0.8f, 0.8f }, SPEC },  // small sphere 2
 	//{ 0.8, { -3.0f, 0.f, 0 }, { 0.0, 0.0, 0.0 }, { 0.0f, 0.0f, 0.2f }, COAT },  // small sphere 2
-	{ 2.5, { -6.0f, 0.5f, 0.0f }, { 0.0, 0.0, 0.0 }, { 0.9f, 0.9f, 0.9f }, SPEC },  // small sphere 2
+// 	{ 2.5, { -6.0f, 0.5f, 0.0f }, { 0.0, 0.0, 0.0 }, { 0.9f, 0.9f, 0.9f }, SPEC },  // small sphere 2
 	//{ 0.6, { -10.0f, -2.f, 1.0f }, { 0.0, 0.0, 0.0 }, { 0.8f, 0.8f, 0.8f }, DIFF },  // small sphere 2
 	//{ 0.8, { -1.0f, -0.7f, 4.0f }, { 0.0, 0.0, 0.0 }, { 0.8f, 0.8f, 0.8f }, REFR },  // small sphere 2
 	//{ 9.4, { 9.0f, 0.f, -9.0f }, { 0.0, 0.0, 0.0 }, { 0.8f, 0.8f, 0.f }, DIFF },  // small sphere 2
@@ -270,7 +274,7 @@ __device__ void DEBUGintersectBVHandTriangles(const float4 rayorig, const float4
 			float c1min = spanBeginKepler2(c1lox, c1hix, c1loy, c1hiy, c1loz, c1hiz, tmin);
 			float c1max = spanEndKepler2(c1lox, c1hix, c1loy, c1hiy, c1loz, c1hiz, hitT);
 
-			float ray_tmax = 1e20;
+			float ray_tmax = 1e10;
 			bool traverseChild0 = (c0min <= c0max) && (c0min >= tmin) && (c0min <= ray_tmax);
 			bool traverseChild1 = (c1min <= c1max) && (c1min >= tmin) && (c1min <= ray_tmax);
 
@@ -414,7 +418,7 @@ __device__ void DEBUGintersectBVHandTriangles(const float4 rayorig, const float4
 
 __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 raydir,
 	const float4* gpuNodes, const float4* gpuTriWoops, const float4* gpuDebugTris, const int* gpuTriIndices, 
-	int& hitTriIdx, float& hitdistance, int& debugbingo, Vec3f& trinormal, int leafcount, int tricount, bool anyHit)
+	int& hitTriIdx, float& hitdistance, int& debugbingo, Vec3f& trinormal, Vec3f& shadenormal, int leafcount, int tricount, bool anyHit)
 {
 	// assign a CUDA thread to every pixel by using the threadIndex
 	// global threadId, see richiesams blogspot
@@ -448,6 +452,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 	// Kepler kernel only
 	//int     leafAddr2;              // Second postponed leaf, non-negative if none.  
 	//int     nodeAddr = EntrypointSentinel; // Non-negative: current internal node, negative: second postponed leaf.
+    float hit_u;
+    float hit_v;
 
 	int threadId1; // ipv rayidx
 
@@ -474,7 +480,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 		tmin = rayorig.w;
 
 		// ooeps is very small number, used instead of raydir xyz component when that component is near zero
-		float ooeps = exp2f(-80.0f); // Avoid div by zero, returns 1/2^80, an extremely small number
+// 		float ooeps = exp2f(-80.0f); // Avoid div by zero, returns 1/2^80, an extremely small number
+		float ooeps = exp2f(-20.0f); // Avoid div by zero, returns 1/2^80, an extremely small number
 		idirx = 1.0f / (fabsf(raydir.x) > ooeps ? raydir.x : copysignf(ooeps, raydir.x)); // inverse ray direction
 		idiry = 1.0f / (fabsf(raydir.y) > ooeps ? raydir.y : copysignf(ooeps, raydir.y)); // inverse ray direction
 		idirz = 1.0f / (fabsf(raydir.z) > ooeps ? raydir.z : copysignf(ooeps, raydir.z)); // inverse ray direction
@@ -490,6 +497,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 		nodeAddr = 0;   // Start from the root.
 		hitIndex = -1;  // No triangle intersected so far.
 		hitT = raydir.w; // tmax  
+        hit_u = 0.0f;
+        hit_v = 0.0f;
 	}
 
 	// Traversal loop.
@@ -536,7 +545,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 
 			// ray box intersection boundary tests:
 			
-			float ray_tmax = 1e20;
+// 			float ray_tmax = 1e20;
+			float ray_tmax = 1e10;
 			bool traverseChild0 = (c0min <= c0max); // && (c0min >= tmin) && (c0min <= ray_tmax);
 			bool traverseChild1 = (c1min <= c1max); // && (c1min >= tmin) && (c1min <= ray_tmax);
 
@@ -626,6 +636,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 			for (int triAddr = ~leafAddr;; triAddr += 3)  // triAddr is index in triWoop array (and bitwise complement of leafAddr)
 			{ // no defined upper limit for loop, continues until leaf terminator code 0x80000000 is encountered
 
+                if (triAddr == debugbingo) continue; // avoid self intersection
+
 				// Read first 16 bytes of the triangle.
 				// fetch first precomputed triangle edge
 				float4 v00 = tex1Dfetch(triWoopTexture, triAddr);
@@ -666,6 +678,8 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 
 							hitT = t;
 							hitIndex = triAddr; // store triangle index for shading
+                            hit_u = u;
+                            hit_v = v;
 
 							// Closest intersection not required => terminate.
 							if (anyHit)  // only true for shadow rays
@@ -697,7 +711,17 @@ __device__ void intersectBVHandTriangles(const float4 rayorig, const float4 rayd
 
 	// Remap intersected triangle index, and store the result.
 
+    debugbingo = hitIndex; // hit tri addr or -1
+
 	if (hitIndex != -1){
+        float4 a = tex1Dfetch(triNormalsTexture, hitIndex);
+        float4 b = tex1Dfetch(triNormalsTexture, hitIndex + 1);
+        float4 c = tex1Dfetch(triNormalsTexture, hitIndex + 2);
+        shadenormal =
+            ( Vec3f(a.x, a.y, a.z) * hit_u
+            + Vec3f(b.x, b.y, b.z) * hit_v
+            + Vec3f(c.x, c.y, c.z) * (1 - hit_u - hit_v)).normalize();
+
 		hitIndex = tex1Dfetch(triIndicesTexture, hitIndex);
 		// remapping tri indices delayed until this point for performance reasons
 		// (slow texture memory lookup in de triIndicesTexture) because multiple triangles per node can potentially be hit
@@ -714,322 +738,944 @@ union Colour  // 4 bytes = 4 chars = 1 float
 	uchar4 components;
 };
 
-__device__ Vec3f renderKernel(curandState* randstate, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops, 
-	const float4* gpuDebugTris, const int* gpuTriIndices, Vec3f& rayorig, Vec3f& raydir, unsigned int leafcount, unsigned int tricount) 
+struct VolumetricProps {
+    __device__ VolumetricProps()
+        :
+        sigma_s(Vec3f(1.09f, 1.59f, 1.79f)),
+        sigma_a(Vec3f(0.013f, 0.070f, 0.145f)),
+        scale(100)
+//         scale(80)
+//         scale(60)
+    {
+        reduced_sigma_t = (sigma_s + sigma_a)*scale;
+        ss_albedo = sigma_s / (sigma_s + sigma_a);
+
+//           const    float w=0.3;//
+       const  float w = 0.02;
+        //    const     float w=0.0001;
+
+        maxDepths[0] = int(logf(w) / logf(ss_albedo.x)) + 1;
+        maxDepths[1] = int(logf(w) / logf(ss_albedo.y)) + 1;
+        maxDepths[2] = int(logf(w) / logf(ss_albedo.z)) + 1;
+
+        if (maxDepths[0] > 1000) maxDepths[0] = 1000;
+        if (maxDepths[1] > 1000) maxDepths[1] = 1000;
+        if (maxDepths[2] > 1000) maxDepths[2] = 1000;
+    }
+
+    float scale; // scattering, absorption and extinction coefficients
+    Vec3f sigma_s, sigma_a; // scattering, absorption
+
+    Vec3f reduced_sigma_t;//extinction coefficient
+    Vec3f ss_albedo;//single scattering albedo
+
+    int maxDepths[3];
+
+    __device__ float sampleSegment(float epsilon, float sigma) {
+        return -logf(1.0f - epsilon) / sigma;
+    }
+    __device__ float3 sampleSphere(float e1, float e2) {
+        float cost = 1.0f - 2.0f * e1/* full sphere */, sint = sqrtf(1.0f - cost * cost);
+        return make_float3(cosf(2.0f * M_PI * e2) * sint, sinf(2.0f * M_PI * e2) * sint, cost);
+    }
+    __device__ Vec3f sampleHG(float g /* mean cosine */, float e1, float e2) {
+        //float s=2.0*e1-1.0, f = (1.0-g*g)/(1.0+g*s), cost = 0.5*(1.0/g)*(1.0+g*g-f*f), sint = sqrtf(1.0-cost*cost);
+        float s = 1.0f - 2.0f*e1, denom = 1.0f + g*s;
+        float cost = (s + 2.0f*g*g*g*(-1.0f + e1) * e1 + g*g*s + 2.0f*g*(1.0f - e1 + e1*e1)) / (denom * denom), sint = sqrtf(1.0f - cost*cost);
+        return Vec3f(cosf(2.0f * M_PI * e2) * sint, sinf(2.0f * M_PI * e2) * sint, cost);
+    }
+    __device__ void generateOrthoBasis(Vec3f &u, Vec3f &v, Vec3f w) {//w is normal
+        Vec3f coVec = (fabs(w.x) < 0.1) ? Vec3f(1, 0, 0) : Vec3f(0, 1, 0);
+        u = cross(coVec, w).normalize();
+        v = cross(w, u);
+    }
+//     __device__ Ray scatter(const Ray &r, float sigma, float &s, float e0, float e1, float e2) {
+//         s = sampleSegment(e0, sigma);
+//         float3 x = r.orig + r.dir * s;
+// 
+//         // note that the reduced sigma = sigma * (1 - g)
+//         float3 dir = sampleHG(0.7f, e1, e2); //Sample a direction ~ Henyey-Greenstein's phase function ***************************************************
+// 
+//         float3 u, v;
+//         generateOrthoBasis(u, v, r.dir);
+//         dir = u * dir.x + v * dir.y + r.dir * dir.z;
+//         //     dir.norm(); //by construction of the sample coordinates, dir is guaranteed to be unit
+//         return Ray(x, dir);
+//     }
+};
+
+__device__ __forceinline__ Ray makeRay(const Vec3f& o, const Vec3f& d) {
+    return Ray(make_float3(o.x, o.y, o.z), make_float3(d.x, d.y, d.z));
+}
+
+
+__constant__ float M_1_PI = 1.0 / M_PI;
+__constant__ float M_4PI = 4.0*M_PI;
+__constant__ float M_1_4PI = 1.0 / (4.0*M_PI);
+
+__device__ float mis_power(const Vec3f& w, int i) {
+    return (w._v[i] * w._v[i]) / (w.x * w.x + w.y * w.y + w.z * w.z);
+}
+
+__device__ float mis_balance(const Vec3f& w, int i) {
+    return w._v[i] / (w.x + w.y + w.z);
+}
+
+__device__ Vec3f mis_power_all(const Vec3f& w) {
+    return Vec3f(mis_power(w, 0), mis_power(w, 1), mis_power(w, 2));
+}
+
+__device__ Vec3f mis_balance_all(const Vec3f& w) {
+    return Vec3f(mis_balance(w, 0), mis_balance(w, 1), mis_balance(w, 2));
+}
+
+class Bssrdf {
+    Vec3f m_variance;
+    Vec3f m_norm;
+    Vec3f m_albedo;
+    Vec3f m_radius;
+    float m_albedo_sum;
+
+    __device__  float _Rd(float r, int channel) {
+        return expf(-r * r / (2 * m_variance._v[channel])) / (2 * M_PI * m_variance._v[channel]);
+    }
+    __device__  float _Rd_clamp(float r, int channel) {
+        if (r > m_radius._v[channel]) return 0;
+        return expf(-r * r / (2 * m_variance._v[channel])) / (2 * M_PI * m_variance._v[channel]);
+    }
+    __device__  float _pdf(float r, int channel) {
+        return _Rd(r, channel) / m_norm._v[channel];
+    }
+    __device__  float _pdf_clamp(float r, int channel) {
+        if (r > m_radius._v[channel]) return 0;
+        return _Rd(r, channel) / m_norm._v[channel];
+    }
+
+public:
+    __device__ const Vec3f& getAlbedo() const { return m_albedo; }
+    __device__ float getAlbedo(int channel) const { return m_albedo._v[channel]; }
+    __device__ Bssrdf(const Vec3f& albedo, const Vec3f& radius) {
+        m_albedo = albedo;
+        m_albedo_sum = m_albedo.x + m_albedo.y + m_albedo.z;
+        m_radius = radius;
+        m_variance = m_radius * m_radius * Vec3f(1.0 / 12.46);
+        m_norm = Vec3f(
+            1 - expf(-m_radius.x * m_radius.x / (2 * m_variance.x)),
+            1 - expf(-m_radius.y * m_radius.y / (2 * m_variance.y)),
+            1 - expf(-m_radius.z * m_radius.z / (2 * m_variance.z))
+            );
+//         printf("albedo: %f, %f, %f\n", m_albedo.x, m_albedo.y, m_albedo.z);
+//         printf("radius: %f, %f, %f\n", m_radius.x, m_radius.y, m_radius.z);
+//         printf("variance: %f, %f, %f\n", m_variance.x, m_variance.y, m_variance.z);
+//         printf("norm: %f, %f, %f\n", m_norm.x, m_norm.y, m_norm.z);
+    }
+    __device__ void sample(float xi, float& r, float& h, int channel) {
+        r = sqrtf(-2 * m_variance._v[channel] * logf(1 - xi * m_norm._v[channel]));
+        if (r > m_radius._v[channel]) r = m_radius._v[channel];
+        h = sqrtf(m_radius._v[channel] * m_radius._v[channel] - r * r);
+    }
+    __device__ float eval(float r, int channel) {
+        return m_albedo._v[channel] * _Rd(r, channel);
+    }
+    __device__ float pdf(float r, int channel) {
+        return _Rd(r, channel) / m_norm._v[channel];
+    }
+
+    // color channel MIS
+    __device__ void sample_MIS(float xi, float& r, float& h, int& channel) {
+        float quantile1 = m_albedo.x / m_albedo_sum;
+        float quantile2 = (m_albedo.x + m_albedo.y) / m_albedo_sum;
+        if (xi < quantile1) {
+            channel = 0;
+            xi = xi / quantile1;
+        }
+        else if (xi < quantile2) {
+            channel = 1;
+            xi = (xi - quantile1) / (quantile2 - quantile1);
+        }
+        else {
+            channel = 2;
+            xi = (xi - quantile2) / (1 - quantile2);
+        }
+        r = sqrtf(-2 * m_variance._v[channel] * logf(1 - xi * m_norm._v[channel]));
+        if (r > m_radius._v[channel]) r = m_radius._v[channel];
+        h = sqrtf(m_radius._v[channel] * m_radius._v[channel] - r * r);
+    }
+    __device__ Vec3f eval_MIS(float r) {
+        return m_albedo * Vec3f(_Rd_clamp(r, 0), _Rd_clamp(r, 1), _Rd_clamp(r, 2));
+    }
+    __device__ Vec3f pdf_MIS(float r) { // pdf * (1 / mis_weight)
+        Vec3f base_pdf = (m_albedo / Vec3f(m_albedo_sum)) * Vec3f(_pdf(r, 0), _pdf(r, 1), _pdf(r, 2));
+        Vec3f mis_pdf = (m_albedo / Vec3f(m_albedo_sum)) * Vec3f(_pdf_clamp(r, 0), _pdf_clamp(r, 1), _pdf_clamp(r, 2));
+        float sqsum = mis_pdf.x + mis_pdf.y + mis_pdf.z; // balance heuristic (power heuristic is bad)
+        Vec3f mis_weight = Vec3f(
+            mis_pdf.x / sqsum,
+            mis_pdf.y / sqsum,
+            mis_pdf.z / sqsum);
+        Vec3f inv_weight = Vec3f(
+            mis_weight.x == 0 ? INFINITY : 1.0 / mis_weight.x,
+            mis_weight.y == 0 ? INFINITY : 1.0 / mis_weight.y,
+            mis_weight.z == 0 ? INFINITY : 1.0 / mis_weight.z);
+
+        return base_pdf * inv_weight;
+    }
+    __device__ float pdf_MIS(float r, int channel) {
+        float base_pdf = (m_albedo._v[channel] / (m_albedo_sum)) * (_pdf(r, channel));
+        Vec3f mis_pdf = (m_albedo / Vec3f(m_albedo_sum)) * Vec3f(_pdf_clamp(r, 0), _pdf_clamp(r, 1), _pdf_clamp(r, 2));
+        float sqsum = mis_pdf.x + mis_pdf.y + mis_pdf.z; // balance heuristic (power heuristic is bad)
+        float mis_weight = mis_pdf._v[channel] / sqsum;
+        float inv_weight = mis_weight == 0 ? INFINITY : 1.0 / mis_weight;
+        return base_pdf * inv_weight;
+    }
+};
+
+__device__ float sample_axis(float xi, Vec3f& axis, Vec3f& tangent, Vec3f& bitangent, Vec3f& axis_weights) {
+    float quantile1 = axis_weights.x;
+    float quantile2 = axis_weights.x + axis_weights.y;
+    if (xi < quantile1) {
+        xi = xi / quantile1;
+    }
+    else if (xi < quantile2) {
+        swap(axis, tangent);
+        swap(axis_weights.x, axis_weights.y);
+        xi = (xi - quantile1) / (quantile2 - quantile1);
+    }
+    else {
+        swap(axis, bitangent);
+        swap(axis_weights.x, axis_weights.z);
+        xi = (xi - quantile2) / (1 - quantile2);
+    }
+    return xi;
+}
+
+__device__ void frame(const Vec3f& w, Vec3f& u, Vec3f& v) {
+    Vec3f ref = fabs(w.x) < 0.1 ? Vec3f(1, 0, 0) : Vec3f(0, 1, 0);
+    u = cross(ref, w).normalize();
+    v = cross(w, u);
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+__device__ Vec3f renderKernelSimple(curandState* randstate, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops,
+    const float4* gpuDebugTris, const int* gpuTriIndices, Vec3f rayorig, Vec3f raydir, unsigned int leafcount, unsigned int tricount)
 {
-	Vec3f mask = Vec3f(1.0f, 1.0f, 1.0f); // colour mask
-	Vec3f accucolor = Vec3f(0.0f, 0.0f, 0.0f); // accumulated colour
-	Vec3f direct = Vec3f(0, 0, 0);
+    Vec3f mask = Vec3f(1.0f, 1.0f, 1.0f); // colour mask
+    Vec3f accucolor = Vec3f(0.0f, 0.0f, 0.0f); // accumulated colour
 
-	for (int bounces = 0; bounces < 4; bounces++){  // iteration up to 4 bounces (instead of recursion in CPU code)
+    int debugbingo = -1;
 
-		int hitSphereIdx = -1;
-		int hitTriIdx = -1;
-		int bestTriIdx = -1;
-		int geomtype = -1;
-		float hitSphereDist = 1e20;
-		float hitDistance = 1e20;
-		float scene_t = 1e20;
-		Vec3f objcol = Vec3f(0, 0, 0);
-		Vec3f emit = Vec3f(0, 0, 0);
-		Vec3f hitpoint; // intersection point
-		Vec3f n; // normal
-		Vec3f nl; // oriented normal
-		Vec3f nextdir; // ray direction of next path segment
-		Vec3f trinormal = Vec3f(0, 0, 0);
-		Refl_t refltype;
-		float ray_tmin = 0.00001f; // set to 0.01f when using refractive material
-		float ray_tmax = 1e20;
+    for (int bounce = 0; bounce < 2; bounce++) {
+        // intersect all triangles in the scene stored in BVH
+        int hitSphereIdx = -1;
+        int hitTriIdx = -1;
+        int bestTriIdx = -1;
+        int geomtype = -1;
+        float hitSphereDist = 1e10;
+        float hitDistance = 1e10;
+        float scene_t = 1e10;
+        Vec3f objcol = Vec3f(0, 0, 0);
+        Vec3f emit = Vec3f(0, 0, 0);
+        Vec3f hitpoint; // intersection point
+        Vec3f n; // normal
+        Vec3f nl; // oriented normal
+        Vec3f nextdir; // ray direction of next path segment
+        Vec3f trinormal = Vec3f(0, 0, 0);
+        Vec3f shadenormal = Vec3f(0, 0, 0);
+        float ray_tmin = 0.0001f;// 0.01f;// 0.00001f; // set to 0.01f when using refractive material
+        float ray_tmax = 1e10;
 
-		// intersect all triangles in the scene stored in BVH
+        intersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+            gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, shadenormal, leafcount, tricount, false);
 
-		int debugbingo = 0;
+        if (hitDistance < scene_t && hitDistance > ray_tmin) // triangle hit
+        {
+            scene_t = hitDistance;
+            hitTriIdx = bestTriIdx;
+            geomtype = 2;
+        }
 
-		intersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
-			gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, leafcount, tricount, false);
+        // sky gradient colour
+        //float t = 0.5f * (raydir.y + 1.2f);
+        //Vec3f skycolor = Vec3f(1.0f, 1.0f, 1.0f) * (1.0f - t) + Vec3f(0.9f, 0.3f, 0.0f) * t;
 
-		//DEBUGintersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
-		//gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, leafcount, tricount, false);
-
-
-		// intersect all spheres in the scene
-
-		// float3 required for sphere intersection (to avoid "dynamic allocation not allowed" error)
-		float3 rayorig_flt3 = make_float3(rayorig.x, rayorig.y, rayorig.z);
-		float3 raydir_flt3 = make_float3(raydir.x, raydir.y, raydir.z);
-
-		float numspheres = sizeof(spheres) / sizeof(Sphere);
-		for (int i = int(numspheres); i--;)  // for all spheres in scene
-			// keep track of distance from origin to closest intersection point
-			if ((hitSphereDist = spheres[i].intersect(Ray(rayorig_flt3, raydir_flt3))) && hitSphereDist < scene_t && hitSphereDist > 0.01f){ 
-				scene_t = hitSphereDist; hitSphereIdx = i; geomtype = 1; }
-
-		if (hitDistance < scene_t && hitDistance > ray_tmin) // triangle hit
-		{
-			scene_t = hitDistance;
-			hitTriIdx = bestTriIdx;
-			geomtype = 2;
-		}
-
-		// sky gradient colour
-		//float t = 0.5f * (raydir.y + 1.2f);
-		//Vec3f skycolor = Vec3f(1.0f, 1.0f, 1.0f) * (1.0f - t) + Vec3f(0.9f, 0.3f, 0.0f) * t;
-		
 #ifdef HDR
-		// HDR 
+        // HDR 
 
-		if (scene_t > 1e19) { // if ray misses scene, return sky
+        if (scene_t > 1e9) { // if ray misses scene, return sky
 
-			// HDR environment map code based on Syntopia "Path tracing 3D fractals"
-			// http://blog.hvidtfeldts.net/index.php/2015/01/path-tracing-3d-fractals/
-			// https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Include/IBL-Pathtracer.frag
-			// GLSL code: 
-			// vec3 equirectangularMap(sampler2D sampler, vec3 dir) {
-			//		dir = normalize(dir);
-			//		vec2 longlat = vec2(atan(dir.y, dir.x) + RotateMap, acos(dir.z));
-			//		return texture2D(sampler, longlat / vec2(2.0*PI, PI)).xyz; }
+            // HDR environment map code based on Syntopia "Path tracing 3D fractals"
+            // http://blog.hvidtfeldts.net/index.php/2015/01/path-tracing-3d-fractals/
+            // https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Include/IBL-Pathtracer.frag
+            // GLSL code: 
+            // vec3 equirectangularMap(sampler2D sampler, vec3 dir) {
+            //		dir = normalize(dir);
+            //		vec2 longlat = vec2(atan(dir.y, dir.x) + RotateMap, acos(dir.z));
+            //		return texture2D(sampler, longlat / vec2(2.0*PI, PI)).xyz; }
 
-			// Convert (normalized) dir to spherical coordinates.
-			float longlatX = atan2f(raydir.x, raydir.z); // Y is up, swap x for y and z for x
-			longlatX = longlatX < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
-			float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
-			
-			// map theta and phi to u and v texturecoordinates in [0,1] x [0,1] range
-			float offsetY = 0.5f;
-			float u = longlatX / TWO_PI; // +offsetY;
-			float v = longlatY / M_PI ; 
+            // Convert (normalized) dir to spherical coordinates.
+            // float longlatX = atan2f(raydir.x, raydir.z); // Y is up, swap x for y and z for x
+            // longlatX = longlatX < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+            // float longlatX = atan2f(raydir.z, raydir.x); // Y is up, swap x for y and z for x
+            // longlatX = raydir.z < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
 
-			// map u, v to integer coordinates
-			int u2 = (int)(u * HDRwidth); //% HDRwidth;
-			int v2 = (int)(v * HDRheight); // % HDRheight;
+//             float longlatX = atan2f(raydir.x, raydir.z); // Y is up, swap x for y and z for x
+//             longlatX = longlatX < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+//             float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
+            float longlatX = ((raydir.x > 0 ? atanf(raydir.z / raydir.x) : atanf(raydir.z / raydir.x) + M_PI) + M_PI * 0.5);
+            float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
 
-			// compute the texel index in the HDR map 
-			int HDRtexelidx = u2 + v2 * HDRwidth;
+            // map theta and phi to u and v texturecoordinates in [0,1] x [0,1] range
+            float offsetY = 0.5f;
+            float u = longlatX / TWO_PI; // +offsetY;
+            float v = longlatY / M_PI;
 
-			//float4 HDRcol = HDRmap[HDRtexelidx];
-			float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);  // fetch from texture
-			Vec3f HDRcol2 = Vec3f(HDRcol.x, HDRcol.y, HDRcol.z);
+            // map u, v to integer coordinates
+            int u2 = (int)(u * HDRwidth); //% HDRwidth;
+            int v2 = (int)(v * HDRheight); // % HDRheight;
 
-			emit = HDRcol2 * 2.0f;
-			accucolor += (mask * emit); 
-			return accucolor; 
-		}
+            // compute the texel index in the HDR map 
+            int HDRtexelidx = u2 + v2 * HDRwidth;
+
+            //float4 HDRcol = HDRmap[HDRtexelidx];
+            float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);  // fetch from texture
+            Vec3f HDRcol2 = Vec3f(HDRcol.x, HDRcol.y, HDRcol.z);
+
+            //         emit = HDRcol2 * 2.0f;
+            emit = HDRcol2;
+            accucolor += (mask * emit);
+            return accucolor;
+        }
 
 #endif // end of HDR
 
-		// SPHERES:
-		if (geomtype == 1){
-			Sphere &hitsphere = spheres[hitSphereIdx]; // hit object with closest intersection
-			hitpoint = rayorig + raydir * scene_t;  // intersection point on object
-			n = Vec3f(hitpoint.x - hitsphere.pos.x, hitpoint.y - hitsphere.pos.y, hitpoint.z - hitsphere.pos.z);	// normal
-			n.normalize();
-			nl = dot(n, raydir) < 0 ? n : n * -1; // correctly oriented normal
-			objcol = Vec3f(hitsphere.col.x, hitsphere.col.y, hitsphere.col.z);   // object colour
-			emit = Vec3f(hitsphere.emi.x, hitsphere.emi.y, hitsphere.emi.z);  // object emission
-			refltype = hitsphere.refl;
-			accucolor += (mask * emit);
-		}
+        // TRIANGLES:
+        if (geomtype == 2){
 
-		// TRIANGLES:
-		if (geomtype == 2){
+            //pBestTri = &pTriangles[triangle_id];
+            hitpoint = rayorig + raydir * scene_t; // intersection point
 
-			//pBestTri = &pTriangles[triangle_id];
-			hitpoint = rayorig + raydir * scene_t; // intersection point
-					
-			// float4 normal = tex1Dfetch(triNormalsTexture, pBestTriIdx);	
-			n = trinormal;
-			n.normalize();
-			nl = dot(n, raydir) < 0 ? n : n * -1;  // correctly oriented normal
-			//Vec3f colour = hitTriIdx->_colorf;
-			Vec3f colour = Vec3f(0.9f, 0.3f, 0.0f); // hardcoded triangle colour  .9f, 0.3f, 0.0f
-			refltype = COAT; // objectmaterial
-			objcol = colour;
-			emit = Vec3f(0.0, 0.0, 0);  // object emission
-			accucolor += (mask * emit);
-		}
+            n = shadenormal; //trinormal;// 
+            n.normalize();
+            nl = dot(n, raydir) < 0 ? n : n * -1;  // correctly oriented normal
+        }
 
-		// basic material system, all parameters are hard-coded (such as phong exponent, index of refraction)
+        Vec3f w = raydir - n * 2.0f * dot(n, raydir); w.normalize();
 
-		// diffuse material, based on smallpt by Kevin Beason 
-		if (refltype == DIFF){
+        rayorig = hitpoint;// +nl * 0.001f;
+        raydir = w;
 
-			// pick two random numbers
-			float phi = 2 * M_PI * curand_uniform(randstate);
-			float r2 = curand_uniform(randstate);
-			float r2s = sqrtf(r2);
-
-			// compute orthonormal coordinate frame uvw with hitpoint as origin 
-			Vec3f w = nl; w.normalize();
-			Vec3f u = cross((fabs(w.x) > .1 ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0)), w); u.normalize();
-			Vec3f v = cross(w, u);
-
-			// compute cosine weighted random ray direction on hemisphere 
-			nextdir = u*cosf(phi)*r2s + v*sinf(phi)*r2s + w*sqrtf(1 - r2);
-			nextdir.normalize();
-
-			// offset origin next path segment to prevent self intersection
-			hitpoint += nl * 0.001f; // scene size dependent
-
-			// multiply mask with colour of object
-			mask *= objcol;
-
-		} // end diffuse material
-
-		// Phong metal material from "Realistic Ray Tracing", P. Shirley
-		if (refltype == METAL){
-
-			// compute random perturbation of ideal reflection vector
-			// the higher the phong exponent, the closer the perturbed vector is to the ideal reflection direction
-			float phi = 2 * M_PI * curand_uniform(randstate);
-			float r2 = curand_uniform(randstate);
-			float phongexponent = 30;
-			float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
-			float sinTheta = sqrtf(1 - cosTheta * cosTheta);
-
-			// create orthonormal basis uvw around reflection vector with hitpoint as origin 
-			// w is ray direction for ideal reflection
-			Vec3f w = raydir - n * 2.0f * dot(n, raydir); w.normalize();
-			Vec3f u = cross((fabs(w.x) > .1 ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0)), w); u.normalize();
-			Vec3f v = cross(w, u); // v is already normalised because w and u are normalised
-
-			// compute cosine weighted random ray direction on hemisphere 
-			nextdir = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
-			nextdir.normalize();
-
-			// offset origin next path segment to prevent self intersection
-			hitpoint += nl * 0.0001f;  // scene size dependent
-
-			// multiply mask with colour of object
-			mask *= objcol;
-		}
-
-		// ideal specular reflection (mirror) 
-		if (refltype == SPEC){
-
-			// compute relfected ray direction according to Snell's law
-			nextdir = raydir - n * dot(n, raydir) * 2.0f;
-			nextdir.normalize();
-
-			// offset origin next path segment to prevent self intersection
-			hitpoint += nl * 0.001f;
-
-			// multiply mask with colour of object
-			mask *= objcol;
-		}
-
-
-		// COAT material based on https://github.com/peterkutz/GPUPathTracer
-		// randomly select diffuse or specular reflection
-		// looks okay-ish but inaccurate (no Fresnel calculation yet)
-		if (refltype == COAT){
-
-			float rouletteRandomFloat = curand_uniform(randstate);
-			float threshold = 0.05f;
-			Vec3f specularColor = Vec3f(1, 1, 1);  // hard-coded
-			bool reflectFromSurface = (rouletteRandomFloat < threshold); //computeFresnel(make_Vec3f(n.x, n.y, n.z), incident, incidentIOR, transmittedIOR, reflectionDirection, transmissionDirection).reflectionCoefficient);
-
-			if (reflectFromSurface) { // calculate perfectly specular reflection
-
-				// Ray reflected from the surface. Trace a ray in the reflection direction.
-				// TODO: Use Russian roulette instead of simple multipliers! 
-				// (Selecting between diffuse sample and no sample (absorption) in this case.)
-
-				mask *= specularColor;
-				nextdir = raydir - n * 2.0f * dot(n, raydir);
-				nextdir.normalize();
-				
-				// offset origin next path segment to prevent self intersection
-				hitpoint += nl * 0.001f; // scene size dependent
-			}
-
-			else {  // calculate perfectly diffuse reflection
-
-				float r1 = 2 * M_PI * curand_uniform(randstate);
-				float r2 = curand_uniform(randstate);
-				float r2s = sqrtf(r2);
-
-				// compute orthonormal coordinate frame uvw with hitpoint as origin 
-				Vec3f w = nl; w.normalize();
-				Vec3f u = cross((fabs(w.x) > .1 ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0)), w); u.normalize();
-				Vec3f v = cross(w, u);
-
-				// compute cosine weighted random ray direction on hemisphere 
-				nextdir = u*cosf(r1)*r2s + v*sinf(r1)*r2s + w*sqrtf(1 - r2);
-				nextdir.normalize();
-
-				// offset origin next path segment to prevent self intersection
-				hitpoint += nl * 0.001f;  // // scene size dependent
-
-				// multiply mask with colour of object
-				mask *= objcol;
-			}
-		} // end COAT
-
-		// perfectly refractive material (glass, water)
-		// set ray_tmin to 0.01 when using refractive material
-		if (refltype == REFR){
-
-			bool into = dot(n, nl) > 0; // is ray entering or leaving refractive material?
-			float nc = 1.0f;  // Index of Refraction air
-			float nt = 1.4f;  // Index of Refraction glass/water
-			float nnt = into ? nc / nt : nt / nc;  // IOR ratio of refractive materials
-			float ddn = dot(raydir, nl);
-			float cos2t = 1.0f - nnt*nnt * (1.f - ddn*ddn);
-
-			if (cos2t < 0.0f) // total internal reflection 
-			{
-				nextdir = raydir - n * 2.0f * dot(n, raydir);
-				nextdir.normalize();
-
-				// offset origin next path segment to prevent self intersection
-				hitpoint += nl * 0.001f; // scene size dependent
-			}
-			else // cos2t > 0
-			{
-				// compute direction of transmission ray
-				Vec3f tdir = raydir * nnt;
-				tdir -= n * ((into ? 1 : -1) * (ddn*nnt + sqrtf(cos2t)));
-				tdir.normalize();
-
-				float R0 = (nt - nc)*(nt - nc) / (nt + nc)*(nt + nc);
-				float c = 1.f - (into ? -ddn : dot(tdir, n));
-				float Re = R0 + (1.f - R0) * c * c * c * c * c;
-				float Tr = 1 - Re; // Transmission
-				float P = .25f + .5f * Re;
-				float RP = Re / P;
-				float TP = Tr / (1.f - P);
-
-				// randomly choose reflection or transmission ray
-				if (curand_uniform(randstate) < 0.2) // reflection ray
-				{
-					mask *= RP;
-					nextdir = raydir - n * 2.0f * dot(n, raydir);
-					nextdir.normalize();
-
-					hitpoint += nl * 0.001f; // scene size dependent
-				}
-				else // transmission ray
-				{
-					mask *= TP;
-					nextdir = tdir; 
-					nextdir.normalize();
-
-					hitpoint += nl * 0.001f; // epsilon must be small to avoid artefacts
-				}
-			}
-		}
-
-		// set up origin and direction of next path segment
-		rayorig = hitpoint; 
-		raydir = nextdir; 
-	} // end bounces for loop
-
-	return accucolor;
+        //     return n;
+//         return Vec3f(1,1,1) * (shadenormal.z > 0 ? shadenormal.z : 0);
+//         return Vec3f(1,1,1) * (shadenormal.z == shadenormal.z ? (shadenormal.z > 0 ? shadenormal.z : 0) : 100);
+    }
+    return accucolor;
 }
 
-__global__ void PathTracingKernel(Vec3f* output, Vec3f* accumbuffer, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops, 
+__device__ Vec3f renderKernelGlass(curandState* randstate, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops,
+    const float4* gpuDebugTris, const int* gpuTriIndices, const Vec3f& _rayorig, const Vec3f& _raydir, unsigned int leafcount, unsigned int tricount)
+{
+    Vec3f mask = Vec3f(1.0f, 1.0f, 1.0f); // colour mask
+    Vec3f accucolor = Vec3f(0.0f, 0.0f, 0.0f); // accumulated colour
+
+    Vec3f depth(0, 0, 0);
+
+    for (int channel = 0; channel < 3; channel++) {
+
+        Vec3f rayorig = _rayorig;
+        Vec3f raydir = _raydir;
+
+        int debugbingo = -1;
+
+        for (int bounces = 0; bounces < 10; bounces++){  // iteration up to 4 bounces (instead of recursion in CPU code)
+            depth._v[channel] += 0.2f;
+
+            int hitSphereIdx = -1;
+            int hitTriIdx = -1;
+            int bestTriIdx = -1;
+            int geomtype = -1;
+            float hitDistance = 1e10;
+            float scene_t = 1e10;
+            Vec3f hitpoint; // intersection point
+            Vec3f n; // normal
+            Vec3f nl; // oriented normal
+            Vec3f nextdir; // ray direction of next path segment
+            Vec3f trinormal = Vec3f(0, 0, 0);
+            Vec3f shadenormal = Vec3f(0, 0, 0);
+            Refl_t refltype;
+            float ray_tmin = 1e-6;// 0.01f;// 0.001; // 0.00001f; //set to 0.01f when using refractive material
+            float ray_tmax = 1e10;
+
+            // intersect all triangles in the scene stored in BVH
+            intersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+                gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, shadenormal, leafcount, tricount, false);
+
+            if (hitDistance < scene_t && hitDistance > ray_tmin) // triangle hit
+            {
+                scene_t = hitDistance;
+                hitTriIdx = bestTriIdx;
+                geomtype = 2;
+            }
+
+#ifdef HDR
+            if (scene_t > 1e9) { // if ray misses scene, return sky
+                if (bounces > 0) {
+                    float longlatX = ((raydir.x > 0 ? atanf(raydir.z / raydir.x) : atanf(raydir.z / raydir.x) + M_PI) + M_PI * 0.5);
+                    float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
+                    float offsetY = 0.5f;
+                    float u = longlatX / TWO_PI; // +offsetY;
+                    float v = longlatY / M_PI;
+                    int u2 = (int)(u * HDRwidth); //% HDRwidth;
+                    int v2 = (int)(v * HDRheight); // % HDRheight;
+                    int HDRtexelidx = u2 + v2 * HDRwidth;
+                    float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);  // fetch from texture
+                    Vec3f HDRcol2 = Vec3f(HDRcol.x, HDRcol.y, HDRcol.z);
+                    Vec3f emit = HDRcol2;
+//                     emit = Vec3f(1, 1, 1);
+                    accucolor._v[channel] += (mask._v[channel] * emit._v[channel]);
+                }
+                break;
+            }
+#endif // end of HDR
+
+            // TRIANGLES:
+            if (geomtype == 2) {
+                hitpoint = rayorig + raydir * scene_t; // intersection point
+                n = shadenormal;//trinormal;// 
+                n.normalize();
+                nl = dot(n, raydir) < 0 ? n : n * -1;  // correctly oriented normal
+                refltype = VOLUME; // objectmaterial
+            }
+
+            // basic material system, all parameters are hard-coded (such as phong exponent, index of refraction)
+            if (refltype == VOLUME){
+                bool into = dot(n, nl) > 0; // is ray entering or leaving refractive material?
+
+                if (!into) {
+                    //Vec3f medium(3, 2, 1);
+                    Vec3f medium = Vec3f(.8646, .9423, .6)*.8 * 10;
+                    mask._v[channel] *= expf(-scene_t * medium._v[channel]);
+                }
+
+                float nc = 1.0f;  // Index of Refraction air
+                float nt = 1.49f;  // Index of Refraction glass/water
+                float nnt = into ? nc / nt : nt / nc;  // IOR ratio of refractive materials
+                float ddn = dot(raydir, nl);
+                float cos2t = 1.0f - nnt*nnt * (1.f - ddn*ddn);
+
+                if (cos2t < 0.0f) // total internal reflection 
+                {
+                    nextdir = raydir - nl * 2.0f * dot(nl, raydir);
+                    nextdir.normalize();
+
+                    // offset origin next path segment to prevent self intersection
+//                     hitpoint += nl * 0.001f; // scene size dependent
+                }
+                else // cos2t > 0
+                {
+                    // compute direction of transmission ray
+                    Vec3f tdir = raydir * nnt;
+                    //tdir -= n * ((into ? 1 : -1) * (ddn*nnt + sqrtf(cos2t)));
+                    tdir -= nl * ((ddn*nnt + sqrtf(cos2t)));
+                    tdir.normalize();
+
+                    float R0 = ((nt - nc)*(nt - nc)) / ((nt + nc)*(nt + nc));
+                    float c = 1.f - (into ? -ddn : dot(tdir, n));
+//                     float c = 1.f - (into ? -ddn : sqrtf(cos2t));
+                    float Re = R0 + (1.f - R0) * c * c * c * c * c;
+                    float Tr = 1 - Re; // Transmission
+                    float P = .25f + .5f * Re;
+                    float RP = Re / P;
+                    float TP = Tr / (1.f - P);
+
+                    // randomly choose reflection or transmission ray
+                    if (curand_uniform(randstate) < P) // reflection ray
+                    {
+                        mask._v[channel] *= RP;
+                        nextdir = raydir - nl * 2.0f * dot(nl, raydir);
+                        nextdir.normalize();
+
+//                         hitpoint += nl * 0.001f; // scene size dependent
+                    }
+                    else // transmission ray
+                    {
+                        mask._v[channel] *= TP;
+                        nextdir = tdir;
+                        nextdir.normalize();
+
+//                         hitpoint -= nl * 0.001f; // epsilon must be small to avoid artefacts
+                    }
+                }
+            }
+
+            // set up origin and direction of next path segment
+            rayorig = hitpoint;
+            raydir = nextdir;
+        } // end bounces for loop
+    }
+
+//     return depth;
+    return accucolor;
+}
+
+__device__ Vec3f renderKernelSSS(curandState* randstate, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops,
+    const float4* gpuDebugTris, const int* gpuTriIndices, const Vec3f& _rayorig, const Vec3f& _raydir, unsigned int leafcount, unsigned int tricount)
+{
+    Vec3f mask = Vec3f(1.0f, 1.0f, 1.0f); // colour mask
+    Vec3f accucolor = Vec3f(0.0f, 0.0f, 0.0f); // accumulated colour
+    Vec3f direct = Vec3f(0, 0, 0);
+
+    VolumetricProps volProps;
+
+    for (int channel = 0; channel < 3; channel++) {
+
+        Vec3f rayorig = _rayorig;
+        Vec3f raydir = _raydir;
+
+        int debugbingo = -1;
+
+        for (int bounces = 0; bounces < volProps.maxDepths[channel]; bounces++){  // iteration up to 4 bounces (instead of recursion in CPU code)
+
+            int hitSphereIdx = -1;
+            int hitTriIdx = -1;
+            int bestTriIdx = -1;
+            int geomtype = -1;
+            float hitSphereDist = 1e10;
+            float hitDistance = 1e10;
+            float scene_t = 1e10;
+            Vec3f objcol = Vec3f(0, 0, 0);
+            Vec3f emit = Vec3f(0, 0, 0);
+            Vec3f hitpoint; // intersection point
+            Vec3f n; // normal
+            Vec3f nl; // oriented normal
+            Vec3f nextdir; // ray direction of next path segment
+            Vec3f trinormal = Vec3f(0, 0, 0);
+            Vec3f shadenormal = Vec3f(0, 0, 0);
+            Refl_t refltype;
+//             float ray_tmin = 1e-6; // 0.01f;//      ///////  0.00001f; // set to 0.01f when using refractive material
+//                 // using small eps and removing normal offset degrades performance heavily
+            float ray_tmin = 1e-2;
+//             float ray_tmin = 1e-6;
+            float ray_tmax = 1e10;
+
+            // intersect all triangles in the scene stored in BVH
+
+            intersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+                gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, shadenormal, leafcount, tricount, false);
+
+            //DEBUGintersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+            //gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, leafcount, tricount, false);
+
+            if (hitDistance < scene_t && hitDistance > ray_tmin) // triangle hit
+            {
+                scene_t = hitDistance;
+                hitTriIdx = bestTriIdx;
+                geomtype = 2;
+            }
+
+            // sky gradient colour
+            //float t = 0.5f * (raydir.y + 1.2f);
+            //Vec3f skycolor = Vec3f(1.0f, 1.0f, 1.0f) * (1.0f - t) + Vec3f(0.9f, 0.3f, 0.0f) * t;
+
+#ifdef HDR
+            // HDR 
+
+            if (scene_t > 1e9) { // if ray misses scene, return sky
+
+                if (bounces > 0) {
+                    // HDR environment map code based on Syntopia "Path tracing 3D fractals"
+                    // http://blog.hvidtfeldts.net/index.php/2015/01/path-tracing-3d-fractals/
+                    // https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Include/IBL-Pathtracer.frag
+                    // GLSL code: 
+                    // vec3 equirectangularMap(sampler2D sampler, vec3 dir) {
+                    //		dir = normalize(dir);
+                    //		vec2 longlat = vec2(atan(dir.y, dir.x) + RotateMap, acos(dir.z));
+                    //		return texture2D(sampler, longlat / vec2(2.0*PI, PI)).xyz; }
+
+                    // Convert (normalized) dir to spherical coordinates.
+                    // float longlatX = atan2f(raydir.x, raydir.z); // Y is up, swap x for y and z for x
+                    // longlatX = longlatX < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+                    // float longlatX = atan2f(raydir.z, raydir.x); // Y is up, swap x for y and z for x
+                    // longlatX = raydir.z < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+                    float longlatX = ((raydir.x > 0 ? atanf(raydir.z / raydir.x) : atanf(raydir.z / raydir.x) + M_PI) + M_PI * 0.5);
+                    float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
+
+                    // map theta and phi to u and v texturecoordinates in [0,1] x [0,1] range
+                    float offsetY = 0.5f;
+                    float u = longlatX / TWO_PI; // +offsetY;
+                    float v = longlatY / M_PI;
+
+                    // map u, v to integer coordinates
+                    int u2 = (int)(u * HDRwidth); //% HDRwidth;
+                    int v2 = (int)(v * HDRheight); // % HDRheight;
+
+                    // compute the texel index in the HDR map 
+                    int HDRtexelidx = u2 + v2 * HDRwidth;
+
+                    //float4 HDRcol = HDRmap[HDRtexelidx];
+                    float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);  // fetch from texture
+                    Vec3f HDRcol2 = Vec3f(HDRcol.x, HDRcol.y, HDRcol.z);
+
+//                     emit = HDRcol2 * 2.0f;
+                    emit = HDRcol2;
+                    accucolor._v[channel] += (mask._v[channel] * emit._v[channel]);
+                }
+                break;
+            }
+
+#endif // end of HDR
+
+            // TRIANGLES:
+            if (geomtype == 2){
+
+                //pBestTri = &pTriangles[triangle_id];
+                hitpoint = rayorig + raydir * scene_t; // intersection point
+
+                // float4 normal = tex1Dfetch(triNormalsTexture, pBestTriIdx);	
+//                 n = trinormal;
+                n = shadenormal;
+                n.normalize();
+                nl = dot(n, raydir) < 0 ? n : n * -1;  // correctly oriented normal
+                //Vec3f colour = hitTriIdx->_colorf;
+                // 			Vec3f colour = Vec3f(0.9f, 0.3f, 0.0f); // hardcoded triangle colour  .9f, 0.3f, 0.0f
+                Vec3f colour = Vec3f(1.0f, 1.0f, 1.0f); // hardcoded triangle colour  .9f, 0.3f, 0.0f
+                // 			refltype = COAT; // objectmaterial
+                // 			refltype = REFR; // objectmaterial
+                refltype = VOLUME; // objectmaterial
+                objcol = colour;
+                emit = Vec3f(0.0, 0.0, 0);  // object emission
+                accucolor._v[channel] += (mask._v[channel] * emit._v[channel]);
+            }
+
+            // SSS
+            if (dot(n, nl) < 0) {
+                float e0 = curand_uniform(randstate), e1 = curand_uniform(randstate), e2 = curand_uniform(randstate);
+                float scatter_dist = -log(e0) / volProps.reduced_sigma_t._v[channel];
+                if (scatter_dist < scene_t) {
+                    rayorig = rayorig + raydir * scatter_dist;
+                    Vec3f dir = volProps.sampleHG(0.7f, e1, e2);  // note that the reduced sigma = sigma * (1 - g)
+                    Vec3f u, v;
+                    volProps.generateOrthoBasis(u, v, raydir);
+                    raydir = (u * dir.x + v * dir.y + raydir * dir.z).normalize();
+                    mask._v[channel] *= volProps.ss_albedo._v[channel];
+                    continue;
+                }
+            }
+
+            // basic material system, all parameters are hard-coded (such as phong exponent, index of refraction)
+            if (refltype == VOLUME){
+
+                bool into = dot(n, nl) > 0; // is ray entering or leaving refractive material?
+                float nc = 1.0f;  // Index of Refraction air
+                float nt = 1.49f;  // Index of Refraction glass/water
+                float nnt = into ? nc / nt : nt / nc;  // IOR ratio of refractive materials
+                float ddn = dot(raydir, nl);
+                float cos2t = 1.0f - nnt*nnt * (1.f - ddn*ddn);
+
+                if (cos2t < 0.0f) // total internal reflection 
+                {
+                    nextdir = raydir - n * 2.0f * dot(n, raydir);
+                    nextdir.normalize();
+
+                    // offset origin next path segment to prevent self intersection
+                    hitpoint += nl * 0.001f; // scene size dependent
+                }
+                else // cos2t > 0
+                {
+                    // compute direction of transmission ray
+                    Vec3f tdir = raydir * nnt;
+                    //tdir -= n * ((into ? 1 : -1) * (ddn*nnt + sqrtf(cos2t)));
+                    tdir -= nl * ((ddn*nnt + sqrtf(cos2t)));
+                    tdir.normalize();
+
+                    float R0 = ((nt - nc)*(nt - nc)) / ((nt + nc)*(nt + nc));
+                    float c = 1.f - (into ? -ddn : dot(tdir, n));
+                    float Re = R0 + (1.f - R0) * c * c * c * c * c;
+                    float Tr = 1 - Re; // Transmission
+                    float P = .25f + .5f * Re;
+                    float RP = Re / P;
+                    float TP = Tr / (1.f - P);
+
+                    // randomly choose reflection or transmission ray
+                    if (curand_uniform(randstate) < P) // reflection ray
+                    {
+                        mask._v[channel] *= RP;
+                        nextdir = raydir - n * 2.0f * dot(n, raydir);
+                        nextdir.normalize();
+
+                        hitpoint += nl * 0.001f; // scene size dependent
+                    }
+                    else // transmission ray
+                    {
+                        mask._v[channel] *= TP;
+                        nextdir = tdir;
+                        nextdir.normalize();
+
+                        hitpoint -= nl * 0.001f; // epsilon must be small to avoid artefacts
+                    }
+                }
+            }
+
+            // set up origin and direction of next path segment
+            rayorig = hitpoint;
+            raydir = nextdir;
+        } // end bounces for loop
+    }
+
+    if (accucolor.x != accucolor.x || accucolor.y != accucolor.y || accucolor.z != accucolor.z) {
+        accucolor = Vec3f(0, 0, 0);
+    }
+
+    return accucolor;
+}
+
+__device__ Vec3f renderKernelBSSRDF(curandState* randstate, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops,
+    const float4* gpuDebugTris, const int* gpuTriIndices, const Vec3f& _rayorig, const Vec3f& _raydir, unsigned int leafcount, unsigned int tricount)
+{
+    Vec3f mask = Vec3f(1.0f, 1.0f, 1.0f); // colour mask
+    Vec3f accucolor = Vec3f(0.0f, 0.0f, 0.0f); // accumulated colour
+    Vec3f direct = Vec3f(0, 0, 0);
+
+//     VolumetricProps volProps;
+    Bssrdf sss(Vec3f(0.8, 0.46, 0.36), Vec3f(4, 2, 1) * Vec3f(0.02));
+
+    for (int channel = 0; channel < 3; channel++)
+    {
+        Vec3f rayorig = _rayorig;
+        Vec3f raydir = _raydir;
+
+        int debugbingo = -1;
+
+        for (int bounces = 0; bounces < 3; bounces++) {  // iteration up to 4 bounces (instead of recursion in CPU code)
+
+            int hitSphereIdx = -1;
+            int hitTriIdx = -1;
+            int bestTriIdx = -1;
+            int geomtype = -1;
+            float hitSphereDist = 1e10;
+            float hitDistance = 1e10;
+            float scene_t = 1e10;
+            Vec3f objcol = Vec3f(0, 0, 0);
+            Vec3f emit = Vec3f(0, 0, 0);
+            Vec3f hitpoint; // intersection point
+            Vec3f n; // normal
+            Vec3f nl; // oriented normal
+            Vec3f nextdir; // ray direction of next path segment
+            Vec3f trinormal = Vec3f(0, 0, 0);
+            Vec3f shadenormal = Vec3f(0, 0, 0);
+            Refl_t refltype;
+            float ray_tmin = 0.01f;// 0.00001f; // set to 0.01f when using refractive material
+            float ray_tmax = 1e10;
+
+            // intersect all triangles in the scene stored in BVH
+
+            intersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+                gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, shadenormal, leafcount, tricount, false);
+
+            //DEBUGintersectBVHandTriangles(make_float4(rayorig.x, rayorig.y, rayorig.z, ray_tmin), make_float4(raydir.x, raydir.y, raydir.z, ray_tmax),
+            //gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, bestTriIdx, hitDistance, debugbingo, trinormal, leafcount, tricount, false);
+
+            if (hitDistance < scene_t && hitDistance > ray_tmin) // triangle hit
+            {
+                scene_t = hitDistance;
+                hitTriIdx = bestTriIdx;
+                geomtype = 2;
+            }
+
+            // sky gradient colour
+            //float t = 0.5f * (raydir.y + 1.2f);
+            //Vec3f skycolor = Vec3f(1.0f, 1.0f, 1.0f) * (1.0f - t) + Vec3f(0.9f, 0.3f, 0.0f) * t;
+
+#ifdef HDR
+            // HDR 
+
+            if (scene_t > 1e9) { // if ray misses scene, return sky
+
+                if (bounces > 0) {
+                    // HDR environment map code based on Syntopia "Path tracing 3D fractals"
+                    // http://blog.hvidtfeldts.net/index.php/2015/01/path-tracing-3d-fractals/
+                    // https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Include/IBL-Pathtracer.frag
+                    // GLSL code: 
+                    // vec3 equirectangularMap(sampler2D sampler, vec3 dir) {
+                    //		dir = normalize(dir);
+                    //		vec2 longlat = vec2(atan(dir.y, dir.x) + RotateMap, acos(dir.z));
+                    //		return texture2D(sampler, longlat / vec2(2.0*PI, PI)).xyz; }
+
+                    // Convert (normalized) dir to spherical coordinates.
+                    // float longlatX = atan2f(raydir.x, raydir.z); // Y is up, swap x for y and z for x
+                    // longlatX = longlatX < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+                    // float longlatX = atan2f(raydir.z, raydir.x); // Y is up, swap x for y and z for x
+                    // longlatX = raydir.z < 0.f ? longlatX + TWO_PI : longlatX;  // wrap around full circle if negative
+                    float longlatX = ((raydir.x > 0 ? atanf(raydir.z / raydir.x) : atanf(raydir.z / raydir.x) + M_PI) + M_PI * 0.5);
+                    float longlatY = acosf(raydir.y); // add RotateMap at some point, see Fragmentarium
+
+                    // map theta and phi to u and v texturecoordinates in [0,1] x [0,1] range
+                    float offsetY = 0.5f;
+                    float u = longlatX / TWO_PI; // +offsetY;
+                    float v = longlatY / M_PI;
+
+                    // map u, v to integer coordinates
+                    int u2 = (int)(u * HDRwidth); //% HDRwidth;
+                    int v2 = (int)(v * HDRheight); // % HDRheight;
+
+                    // compute the texel index in the HDR map 
+                    int HDRtexelidx = u2 + v2 * HDRwidth;
+
+                    //float4 HDRcol = HDRmap[HDRtexelidx];
+                    float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);  // fetch from texture
+                    Vec3f HDRcol2 = Vec3f(HDRcol.x, HDRcol.y, HDRcol.z);
+
+//                     emit = HDRcol2 * 2.0f;
+                    emit = HDRcol2;
+                    accucolor._v[channel] += (mask._v[channel] * emit._v[channel]);
+                }
+                break;
+            }
+
+#endif // end of HDR
+
+            // TRIANGLES:
+            if (geomtype == 2){
+
+                //pBestTri = &pTriangles[triangle_id];
+                hitpoint = rayorig + raydir * scene_t; // intersection point
+
+                // float4 normal = tex1Dfetch(triNormalsTexture, pBestTriIdx);	
+//                 n = trinormal;
+                n = shadenormal;
+                n.normalize();
+                nl = dot(n, raydir) < 0 ? n : n * -1;  // correctly oriented normal
+                refltype = BSSRDF; // objectmaterial
+            }
+
+            // basic material system, all parameters are hard-coded (such as phong exponent, index of refraction)
+
+            // diffuse material, based on smallpt by Kevin Beason 
+            if (refltype == BSSRDF){
+                // nl
+                // hitpoint
+
+                Vec3f axis(0), tangent(0), bitangent(0);
+
+                axis = nl;
+                frame(axis, tangent, bitangent);
+                //Vec3f axis_probs(0.5, 0.25, 0.25);
+                //Vec3f axis_probs(1, 0, 0);
+                Vec3f axis_probs(0.8, 0.1, 0.1);
+                float rand1 = curand_uniform(randstate);
+                rand1 = sample_axis(rand1, axis, tangent, bitangent, axis_probs); // swapped
+
+                float _r, _h;
+//                 int channel;
+//                 sss.sample_MIS(curand_uniform(randstate), _r, _h, channel); // one sample MIS of channel pdfs
+                sss.sample(curand_uniform(randstate), _r, _h, channel);
+                float theta = rand1 * 2 * M_PI;
+                Vec3f disk_sample = tangent * (_r * cos(theta)) + bitangent * (_r * sin(theta));
+                Vec3f probe_ray_orig = hitpoint + disk_sample + axis * _h;
+                Vec3f probe_ray_dir = axis * -1.0f;
+                float probe_ray_maxT = 2 * _h;
+
+
+#if 0
+                float phi = 2 * M_PI * curand_uniform(randstate);
+                float r2 = curand_uniform(randstate);
+                float r2s = sqrtf(r2);
+                Vec3f w = nl; w.normalize();
+                Vec3f u = cross((fabs(w.x) > .1 ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0)), w); u.normalize();
+                Vec3f v = cross(w, u);
+                nextdir = u*cosf(phi)*r2s + v*sinf(phi)*r2s + w*sqrtf(1 - r2);
+                nextdir.normalize();
+                mask._v[channel] *= sss.getAlbedo(channel);
+
+#else
+
+                debugbingo = -1;
+                int probehitTriIdx = -1;
+                int probebestTriIdx = -1;
+                int probegeomtype = -1;
+                Vec3f probetrinormal = Vec3f(0, 0, 0);
+                Vec3f probeshadenormal = Vec3f(0, 0, 0);
+                float probehitDistance = 1e10;
+                float probe_scene_t = 1e10;
+                Vec3f probehitpoint(0); // intersection point
+                Vec3f probe_n(0); // normal
+                Vec3f probe_nl(0); // oriented normal
+                intersectBVHandTriangles(make_float4(probe_ray_orig.x, probe_ray_orig.y, probe_ray_orig.z, ray_tmin), make_float4(probe_ray_dir.x, probe_ray_dir.y, probe_ray_dir.z, probe_ray_maxT),
+                    gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, probebestTriIdx, probehitDistance, debugbingo, probetrinormal, probeshadenormal, leafcount, tricount, false);
+
+                if (probehitDistance < probe_scene_t && probehitDistance > ray_tmin) // triangle hit
+                {
+                    probe_scene_t = probehitDistance;
+                    probehitTriIdx = probebestTriIdx;
+                    probegeomtype = 2;
+                }
+                // TRIANGLES:
+                if (probegeomtype == 2){
+
+                    //pBestTri = &pTriangles[triangle_id];
+                    probehitpoint = probe_ray_orig + probe_ray_dir * probe_scene_t; // intersection point
+
+                    // float4 normal = tex1Dfetch(triNormalsTexture, pBestTriIdx);	
+                    probe_n = probetrinormal;
+                    //                 probe_n = trinormal;
+                    probe_n.normalize();
+                    //probe_nl = dot(probe_n, probe_ray_dir) < 0 ? probe_n : probe_n * -1;  // correctly oriented normal
+                    probe_nl = probe_n;
+                    //////////////////////////////////////////////////////////////////////////
+                    //                 mask._v[channel] *= sss.getAlbedo(channel)// sees fit
+
+                    Vec3f disp = probehitpoint - hitpoint;
+                    Vec3f rproj = Vec3f(dot(axis, disp), dot(tangent, disp), dot(bitangent, disp));
+                    //                 Vec3f pdf_proj = Vec3f(
+                    //                     sss.pdf_MIS(sqrtf(rproj.y*rproj.y + rproj.z*rproj.z), channel),
+                    //                     sss.pdf_MIS(sqrtf(rproj.x*rproj.x + rproj.z*rproj.z), channel),
+                    //                     sss.pdf_MIS(sqrtf(rproj.x*rproj.x + rproj.y*rproj.y), channel));
+                    Vec3f pdf_proj(1); // robust, and no significant difference
+                    Vec3f axis_mis_weights = axis_probs * pdf_proj
+                        * Vec3f(fabs(dot(axis, probe_nl)), fabs(dot(tangent, probe_nl)), fabs(dot(bitangent, probe_nl)));
+                    //                 mask._v[channel] *= sss.eval_MIS((probehitpoint - hitpoint).length()) / sss.pdf_MIS(_r) / Vec3f(fabs(dot(axis, probe_nl)))
+                    //                     * Vec3f(mis_power(axis_mis_weights, 0) / axis_probs.x) * M_1_PI * M_1_PI // sampling axis swapped to the first
+                    //                    ;
+
+                    mask._v[channel] *= sss.eval((probehitpoint - hitpoint).length(), channel) / sss.pdf(rproj.x, channel)
+                       ;
+                    ///
+
+                    // pick two random numbers
+                    float phi = 2 * M_PI * curand_uniform(randstate);
+                    float r2 = curand_uniform(randstate);
+                    float r2s = sqrtf(r2);
+
+                    // compute orthonormal coordinate frame uvw with hitpoint as origin 
+                    Vec3f w = probe_nl; w.normalize();
+                    Vec3f u = cross((fabs(w.x) > .1 ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0)), w); u.normalize();
+                    Vec3f v = cross(w, u);
+
+                    // compute cosine weighted random ray direction on hemisphere 
+                    nextdir = u*cosf(phi)*r2s + v*sinf(phi)*r2s + w*sqrtf(1 - r2);
+                    nextdir.normalize();
+
+                    // offset origin next path segment to prevent self intersection
+                    hitpoint = probehitpoint + probe_nl * 0.001f; // scene size dependent
+                }
+                else {
+                    break;
+                }
+#endif
+
+            } // end diffuse material
+
+            // set up origin and direction of next path segment
+            rayorig = hitpoint;
+            raydir = nextdir;
+        } // end bounces for loop
+    }
+
+    return accucolor;
+}
+
+__global__ void PathTracingKernel(Vec3f* output, Vec3f* accumbuffer, const float4* HDRmap, const float4* gpuNodes, const float4* gpuTriWoops,
 	const float4* gpuDebugTris, const int* gpuTriIndices, unsigned int framenumber, unsigned int hashedframenumber, unsigned int leafcount, 
-	unsigned int tricount, const Camera* cudaRendercam) 
+	unsigned int tricount, const Camera* cudaRendercam, int debugFlags) 
 {
 	// assign a CUDA thread to every pixel by using the threadIndex
 	unsigned int x = blockIdx.x*blockDim.x + threadIdx.x;
@@ -1118,13 +1764,34 @@ __global__ void PathTracingKernel(Vec3f* output, Vec3f* accumbuffer, const float
 		// ray origin
 		Vec3f originInWorldSpace = aperturePoint;
 
-		finalcol += renderKernel(&randState, HDRmap, gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, 
-				originInWorldSpace, rayInWorldSpace, leafcount, tricount) * (1.0f/samps);
+        switch (debugFlags)
+        {
+        default:
+        case 0:
+		    finalcol += renderKernelSimple(&randState, HDRmap, gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, 
+				    originInWorldSpace, rayInWorldSpace, leafcount, tricount) * (1.0f/samps);
+            break;
+        case 1:
+		    finalcol += renderKernelSSS(&randState, HDRmap, gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, 
+				    originInWorldSpace, rayInWorldSpace, leafcount, tricount) * (1.0f/samps);
+            break;
+        case 2:
+		    finalcol += renderKernelBSSRDF(&randState, HDRmap, gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, 
+				    originInWorldSpace, rayInWorldSpace, leafcount, tricount) * (1.0f/samps);
+            break;
+        case 3:
+		    finalcol += renderKernelGlass(&randState, HDRmap, gpuNodes, gpuTriWoops, gpuDebugTris, gpuTriIndices, 
+				    originInWorldSpace, rayInWorldSpace, leafcount, tricount) * (1.0f/samps);
+            break;
+        }
 	}
 
 	// add pixel colour to accumulation buffer (accumulates all samples) 
 	accumbuffer[i] += finalcol;
 	
+
+    ///
+#if 0
 	// averaged colour: divide colour by the number of calculated frames so far
 	Vec3f tempcol = accumbuffer[i] / framenumber;
 
@@ -1132,12 +1799,66 @@ __global__ void PathTracingKernel(Vec3f* output, Vec3f* accumbuffer, const float
 	Vec3f colour = Vec3f(clamp(tempcol.x, 0.0f, 1.0f), clamp(tempcol.y, 0.0f, 1.0f), clamp(tempcol.z, 0.0f, 1.0f));
 	
 	// convert from 96-bit to 24-bit colour + perform gamma correction
-	fcolour.components = make_uchar4((unsigned char)(powf(colour.x, 1 / 2.2f) * 255), 
-										(unsigned char)(powf(colour.y, 1 / 2.2f) * 255), 
-										(unsigned char)(powf(colour.z, 1 / 2.2f) * 255), 1);
+// 	fcolour.components = make_uchar4((unsigned char)(powf(colour.x, 1 / 2.2f) * 255), 
+// 										(unsigned char)(powf(colour.y, 1 / 2.2f) * 255), 
+// 										(unsigned char)(powf(colour.z, 1 / 2.2f) * 255), 1);
 	
+    Vec3f colorMapped = tonemap_kernel(colour);
+    fcolour.components = make_uchar4(
+        (unsigned char)((colorMapped.x) * 255),
+        (unsigned char)((colorMapped.y) * 255),
+        (unsigned char)((colorMapped.z) * 255), 1);
+
 	// store pixel coordinates and pixelcolour in OpenGL readable outputbuffer
 	output[i] = Vec3f(x, y, fcolour.c);
+#endif
+}
+
+#include "tonemap.cuh"
+
+#include <queue>
+class FPS_counter {
+    std::queue<float> timesamples;
+    float timesum;
+    const int maxcount = 100;
+
+public:
+    FPS_counter() {
+        //         for (int n = 0; n < 100; n++)
+        //             timesamples.push(0);
+        timesum = 0;
+    }
+    void sample(float t) {
+        if (timesamples.size() >= maxcount) {
+            float t0 = timesamples.front();
+            timesum -= t0;
+            timesamples.pop();
+        }
+        timesamples.push(t);
+        timesum += t;
+    }
+    float count() {
+        return float(timesamples.size());
+    }
+    float total() {
+        return timesum;
+    }
+    float avg() {
+        return timesum / float(timesamples.size());
+    }
+    void info() {
+        printf("timesum: %.6f s, n: %d\n", timesum * 1e-3, timesamples.size());
+    }
+    void reset() {
+        timesamples.swap(std::queue<float>());
+        timesum = 0;
+    }
+};
+
+FPS_counter fps;
+
+void resetTimeWindow() {
+    fps.reset();
 }
 
 bool firstTime = true;
@@ -1145,7 +1866,7 @@ bool firstTime = true;
 // the gateway to CUDA, called from C++ (in void disp() in main.cpp)
 void cudaRender(const float4* nodes, const float4* triWoops, const float4* debugTris, const int* triInds, 
 	Vec3f* outputbuf, Vec3f* accumbuf, const float4* HDRmap, const unsigned int framenumber, const unsigned int hashedframenumber, 
-	const unsigned int nodeSize, const unsigned int leafnodecnt, const unsigned int tricnt, const Camera* cudaRenderCam){
+	const unsigned int nodeSize, const unsigned int leafnodecnt, const unsigned int tricnt, const Camera* cudaRenderCam, int debugFlags){
 
 	if (firstTime) {
 		// if this is the first time cudarender() is called,
@@ -1158,6 +1879,9 @@ void cudaRender(const float4* nodes, const float4* triWoops, const float4* debug
 		cudaChannelFormatDesc channel1desc = cudaCreateChannelDesc<float4>();
 		cudaBindTexture(NULL, &triWoopTexture, triWoops, &channel1desc, (tricnt * 3 + leafnodecnt) * sizeof(float4));
 
+        cudaChannelFormatDesc channel2desc = cudaCreateChannelDesc<float4>();
+        cudaBindTexture(NULL, &triNormalsTexture, debugTris, &channel2desc, (tricnt * 3 + leafnodecnt) * sizeof(float4));
+
 		cudaChannelFormatDesc channel3desc = cudaCreateChannelDesc<float4>();
 		cudaBindTexture(NULL, &bvhNodesTexture, nodes, &channel3desc, nodeSize * 5 * sizeof(float4));  /// 5 is niet goed
 
@@ -1169,15 +1893,62 @@ void cudaRender(const float4* nodes, const float4* triWoops, const float4* debug
 		printf("CudaWoopTriangles texture initialised, tri count: %d\n", tricnt);
 	}
 
-	dim3 block(16, 16, 1);   // dim3 CUDA specific syntax, block and grid are required to schedule CUDA threads over streaming multiprocessors
+// 	dim3 block(16, 16, 1);   // dim3 CUDA specific syntax, block and grid are required to schedule CUDA threads over streaming multiprocessors
+	dim3 block(8, 8, 1);   // dim3 CUDA specific syntax, block and grid are required to schedule CUDA threads over streaming multiprocessors
 	dim3 grid(scrwidth / block.x, scrheight / block.y, 1);
 
 	// Configure grid and block sizes:
-	int threadsPerBlock = 256;
+// 	int threadsPerBlock = 256;
+	int threadsPerBlock = block.x * block.y;
 	// Compute the number of blocks required, performing a ceiling operation to make sure there are enough:
 	int fullBlocksPerGrid = ((scrwidth * scrheight) + threadsPerBlock - 1) / threadsPerBlock;
 	// <<<fullBlocksPerGrid, threadsPerBlock>>>
-	PathTracingKernel << <grid, block >> >(outputbuf, accumbuf, HDRmap, nodes, triWoops, debugTris, 
-		triInds, framenumber, hashedframenumber, leafnodecnt, tricnt, cudaRenderCam);  // texdata, texoffsets
 
+    ///
+
+    static float totalElapsedTime = 0;
+    static int spp = 0;
+    // Measuring rendering time (in millisecond)
+    cudaEvent_t start, end;
+    cudaEventCreate(&start);
+    cudaEventCreate(&end);
+    cudaEventRecord(start);
+
+	PathTracingKernel << <grid, block >> >(outputbuf, accumbuf, HDRmap, nodes, triWoops, debugTris, 
+		triInds, framenumber, hashedframenumber, leafnodecnt, tricnt, cudaRenderCam, debugFlags);  // texdata, texoffsets
+
+    cudaDeviceSynchronize();
+    cudaEventRecord(end);
+    cudaEventSynchronize(end);
+    float elapsedTime;
+    cudaEventElapsedTime(&elapsedTime, start, end);
+    cudaEventDestroy(start);
+    cudaEventDestroy(end);
+    totalElapsedTime += elapsedTime;
+    spp += samps;
+    fps.sample(elapsedTime);
+    fps.info();
+    printf("%f M rays / s\n", float(scrwidth) * float(scrheight) / (fps.avg() * 1e-3) * 1e-6);
+    //printf("%f M rays / s\n", float(scrwidth) * float(scrheight) * float(spp) / (totalElapsedTime * 1e-3) * 1e-6);
+
+    ///
+    float *image_r = nullptr;
+    float *image_g = nullptr;
+    float *image_b = nullptr;
+    cudaMalloc((void**)&image_r, sizeof(float) * scrwidth * scrheight);
+    cudaMalloc((void**)&image_g, sizeof(float) * scrwidth * scrheight);
+    cudaMalloc((void**)&image_b, sizeof(float) * scrwidth * scrheight);
+
+    colorKernel << <grid, block >> >(accumbuf, framenumber, image_r, image_g, image_b);
+
+    int total = scrwidth * scrheight;
+    float r_mean = cudaSum(image_r, total) / (total);
+    float g_mean = cudaSum(image_g, total) / (total);
+    float b_mean = cudaSum(image_b, total) / (total);
+
+    tonemappingKernel << <grid, block >> >(outputbuf, accumbuf, framenumber, r_mean, g_mean, b_mean);
+
+    cudaFree(image_r);
+    cudaFree(image_g);
+    cudaFree(image_b);
 }

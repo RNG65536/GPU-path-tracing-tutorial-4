@@ -20,4 +20,5 @@ public:
 class HDRLoader {
 public:
 	static bool load(const char *fileName, HDRImage &res);
+    static bool save(const char *fileName, const HDRImage &res);
 };

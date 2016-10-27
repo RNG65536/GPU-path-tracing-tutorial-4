@@ -273,9 +273,17 @@ void CudaBVH::woopifyTri(const BVH& bvh, int triIdx)
 	const Vec3f& v2 = Vec3f(vertices[vtxInds._v[2]].x, vertices[vtxInds._v[2]].y, vertices[vtxInds._v[2]].z); // vtx xyz pos voor derde triangle vtx
 
 	// regular triangles (for debugging only)
-	m_debugtri[0] = Vec4f(v0.x, v0.y, v0.z, 0.0f);
-	m_debugtri[1] = Vec4f(v1.x, v1.y, v1.z, 0.0f);
-	m_debugtri[2] = Vec4f(v2.x, v2.y, v2.z, 0.0f);
+// 	m_debugtri[0] = Vec4f(v0.x, v0.y, v0.z, 0.0f);
+// 	m_debugtri[1] = Vec4f(v1.x, v1.y, v1.z, 0.0f);
+// 	m_debugtri[2] = Vec4f(v2.x, v2.y, v2.z, 0.0f);
+
+    // vertex normals
+    const Vec3f& n0 = vertices[vtxInds._v[0]]._normal;
+    const Vec3f& n1 = vertices[vtxInds._v[1]]._normal;
+    const Vec3f& n2 = vertices[vtxInds._v[2]]._normal;
+    m_debugtri[0] = Vec4f(n0.x, n0.y, n0.z, 0.0f);
+    m_debugtri[1] = Vec4f(n1.x, n1.y, n1.z, 0.0f);
+    m_debugtri[2] = Vec4f(n2.x, n2.y, n2.z, 0.0f);
 
 	Mat4f mtx;
 	// compute edges and transform them with a matrix 

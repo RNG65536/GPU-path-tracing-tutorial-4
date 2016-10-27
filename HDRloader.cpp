@@ -12,6 +12,7 @@ from http://www.flipcode.com/archives/HDR_Image_Reader.shtml
 #include <math.h>
 #include <memory.h>
 #include <stdio.h>
+#include "rgbe.h"
 
 typedef unsigned char RGBE[4];
 #define R			0
@@ -188,4 +189,16 @@ bool oldDecrunch(RGBE *scanline, int len, FILE *file)
 		}
 	}
 	return true;
+}
+
+bool HDRLoader::save(const char *fileName, const HDRImage &res) {
+    rgbe_header_info _header;
+    _header.valid = RGBE_VALID_PROGRAMTYPE | RGBE_VALID_GAMMA | RGBE_VALID_EXPOSURE;
+    sprintf_s(_header.programtype, "RADIANCE");
+    _header.exposure = 1.0;
+    FILE *fp = fopen(fileName, "wb");
+    RGBE_WriteHeader(fp, res.width, res.height, &_header);
+    RGBE_WritePixels(fp, res.colors, res.width * res.height);
+    fclose(fp);
+    return true;
 }

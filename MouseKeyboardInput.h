@@ -7,19 +7,25 @@ InteractiveCamera* interactiveCamera = NULL;
 
 bool buffer_reset = false;
 
+void resetTimeWindow();
+void capture();
+
 void initCamera()
 {
 	delete interactiveCamera;
 	interactiveCamera = new InteractiveCamera();
 
 	interactiveCamera->setResolution(scrwidth, scrheight);
-	interactiveCamera->setFOVX(45);
+// 	interactiveCamera->setFOVX(45);
+	interactiveCamera->setFOVX(60);
 }
 
 // mouse event handlers
 int lastX = 0, lastY = 0;
 int theButtonState = 0;
 int theModifierState = 0;
+
+int renderMode = 0;
 
 // keyboard interaction
 void keyboard(unsigned char key, int /*x*/, int /*y*/)
@@ -38,6 +44,13 @@ void keyboard(unsigned char key, int /*x*/, int /*y*/)
 	case('h') : interactiveCamera->changeApertureDiameter(-0.1); buffer_reset = true; break;
 	case('t') : interactiveCamera->changeFocalDistance(0.1); buffer_reset = true; break;
 	case('y') : interactiveCamera->changeFocalDistance(-0.1); buffer_reset = true; break;
+    case('c') : interactiveCamera->saveCamera(); break;
+    case('x') : renderMode = (renderMode + 1) % 2; resetTimeWindow(); buffer_reset = true; break;
+    case('1') : renderMode = 0; resetTimeWindow();  buffer_reset = true; break;
+    case('2') : renderMode = 1; resetTimeWindow();  buffer_reset = true; break;
+    case('3') : renderMode = 2; resetTimeWindow();  buffer_reset = true; break;
+    case('4') : renderMode = 3; resetTimeWindow();  buffer_reset = true; break;
+    case('p') : capture(); break;
 	}
 }
 

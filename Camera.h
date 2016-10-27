@@ -54,7 +54,7 @@ public:
 	void setFOVX(float fovx);
 
 	void buildRenderCamera(Camera* renderCamera);
-
+    void saveCamera();
 	Vec2f resolution;
 	Vec2f fov;
 };

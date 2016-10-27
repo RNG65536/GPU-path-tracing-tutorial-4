@@ -1,8 +1,10 @@
+#define GLEW_STATIC
 #include <GL/glew.h>
 #ifdef __APPLE__
 #include <GLUT/glut.h>
 #else
-#include <GL/glut.h>
+#define FREEGLUT_STATIC
+#include <GL/freeglut.h>
 #endif
 #include <sstream>
 #include <iostream>
@@ -24,10 +26,12 @@
 #endif
 
 // test scenes
+// const char* scenefile = "../dragon1.obj"; 
+const char* scenefile = "G:\\! _____ SYNC_WITH_SSD _____\\dragon_fix.obj"; // scaled in SceneLoader.cpp
 
 //const char* scenefile = "data/icosahedron.obj";
 //const char* scenefile = "data/dragon_vrip_res3.ply";  
-const char* scenefile = "data/dragon.obj"; 
+// const char* scenefile = "data/dragon_vrip.ply"; 
 //const char* scenefile = "data/happy_vrip_res2.ply";  
 //const char* scenefile = "data/happy_vrip.ply"; 
 //const char* scenefile = "data/bun_zipper.ply";  
@@ -37,9 +41,12 @@ const char* scenefile = "data/dragon.obj";
 //const char* scenefile = "data/sponza_crytek.obj"; 
 
 // HDR environment
+const char* HDRmapname = "data/envmap2.hdr";
+// const char* HDRmapname = "data/at_the_window2.hdr";
+// const char* HDRmapname = "data/sun.hdr";
 
+// const char* HDRmapname = "data/Topanga_Forest_B_3k.hdr"; //++++++++++
 //const char* HDRmapname = "data/ArboretumInBloom_Ref.hdr"; 
-const char* HDRmapname = "data/Topanga_Forest_B_3k.hdr";
 //const char* HDRmapname = "data/Ditch-River_2k.hdr";
 //const char* HDRmapname = "data/GCanyon_C_YumaPoint_3k.hdr";
 
@@ -81,7 +88,7 @@ bool nocachedBVH = false;
 
 void Timer(int obsolete) {
 	glutPostRedisplay();
-	glutTimerFunc(10, Timer, 0);
+	glutTimerFunc(30, Timer, 0);
 }
 
 void createVBO(GLuint* vbo)
@@ -97,6 +104,23 @@ void createVBO(GLuint* vbo)
 
 	//Register VBO with CUDA
 	cudaGLRegisterBufferObject(*vbo);
+}
+
+void capture() {
+    Vec3f *h_fb = new Vec3f[scrwidth * scrheight];
+    cudaMemcpy((void*)h_fb, (void*)accumulatebuffer, sizeof(Vec3f) * scrwidth * scrheight, cudaMemcpyDeviceToHost);
+    float weight = 1.0f / framenumber;
+    for (int n = 0; n < scrwidth * scrheight; n++) {
+        h_fb[n] *= weight;
+    }
+
+    HDRImage hdr;
+    hdr.width = scrwidth;
+    hdr.height = scrheight;
+    hdr.colors = (float*)h_fb;
+    HDRLoader::save("test.hdr", hdr);
+
+    delete[] h_fb;
 }
 
 // display function called by glutMainLoop(), gets executed every frame 
@@ -124,7 +148,7 @@ void disp(void)
 
 	// gateway from host to CUDA, passes all data needed to render frame (triangles, BVH tree, camera) to CUDA for execution
 	cudaRender(cudaNodePtr, cudaTriWoopPtr, cudaTriDebugPtr, cudaTriIndicesPtr, finaloutputbuffer,
-		accumulatebuffer, gpuHDRenv, framenumber, hashedframes, nodeSize, leafnode_count, triangle_count, cudaRendercam);
+		accumulatebuffer, gpuHDRenv, framenumber, hashedframes, nodeSize, leafnode_count, triangle_count, cudaRendercam, renderMode);
 	
 	cudaThreadSynchronize();
 	cudaGLUnmapBufferObject(vbo);
@@ -137,6 +161,10 @@ void disp(void)
 	glEnableClientState(GL_COLOR_ARRAY);
 	glDrawArrays(GL_POINTS, 0, scrwidth * scrheight);
 	glDisableClientState(GL_VERTEX_ARRAY);
+
+    char title[256];
+    sprintf_s(title, "%d spp", framenumber);
+    glutSetWindowTitle(title);
 
 	glutSwapBuffers();
 }
@@ -197,23 +225,23 @@ void initHDR(){
 
 	if (HDRLoader::load(HDRfile, HDRresult)) 
 		printf("HDR environment map loaded. Width: %d Height: %d\n", HDRresult.width, HDRresult.height);
-	else{ 
-		printf("HDR environment map not found\nAn HDR map is required as light source. Exiting now...\n"); 
-		system("PAUSE");
-		exit(0);
-	}
-	
+	else printf("HDR environment map not found\n");
+
 	int HDRwidth = HDRresult.width;
 	int HDRheight = HDRresult.height;
 	cpuHDRenv = new Vec4f[HDRwidth * HDRheight];
 	//_data = new RGBColor[width*height];
 
+    float brightness = 3;
 	for (int i = 0; i<HDRwidth; i++){
 		for (int j = 0; j<HDRheight; j++){
 			int idx = 3 * (HDRwidth*j + i);
 			//int idx2 = width*(height-j-1)+i;
 			int idx2 = HDRwidth*(j)+i;
-			cpuHDRenv[idx2] = Vec4f(HDRresult.colors[idx], HDRresult.colors[idx + 1], HDRresult.colors[idx + 2], 0.0f);
+			cpuHDRenv[idx2] = Vec4f(
+                brightness * HDRresult.colors[idx], 
+                brightness * HDRresult.colors[idx + 1], 
+                brightness * HDRresult.colors[idx + 2], 0.0f);
 		}
 	}
 
