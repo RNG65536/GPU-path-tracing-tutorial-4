@@ -24,8 +24,10 @@
 // #define HDRheight 1600
 // #define HDRwidth 1000
 // #define HDRheight 500
-#define HDRwidth 512
-#define HDRheight 256
+// #define HDRwidth 512
+// #define HDRheight 256
+#define HDRwidth 1024
+#define HDRheight 512
 #define HDR
 #define EntrypointSentinel 0x76543210
 #define MaxBlockHeight 6

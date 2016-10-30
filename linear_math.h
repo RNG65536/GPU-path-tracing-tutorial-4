@@ -3,6 +3,9 @@
 #include <math.h>
 #include <cuda_runtime.h> // for __host__  __device__
 
+#undef min
+#undef max
+
 #define FW_ASSERT(X) ((void)0) 
 // FW_ASSERT(X) ((X) ? ((void)0) : FW::fail("Assertion failed!\n%s:%d\n%s", __FILE__, __LINE__, #X)) in DEBUG
 

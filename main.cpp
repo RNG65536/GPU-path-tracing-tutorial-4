@@ -26,8 +26,9 @@
 #endif
 
 // test scenes
-// const char* scenefile = "../dragon1.obj"; 
-const char* scenefile = "G:\\! _____ SYNC_WITH_SSD _____\\dragon_fix.obj"; // scaled in SceneLoader.cpp
+// const char* scenefile = "../dragon1.obj";
+// const char* scenefile = "G:\\! _____ SYNC_WITH_SSD _____\\dragon_fix.obj"; // scaled in SceneLoader.cpp
+const char* scenefile = "data/dragon.obj";
 
 //const char* scenefile = "data/icosahedron.obj";
 //const char* scenefile = "data/dragon_vrip_res3.ply";  
@@ -41,9 +42,10 @@ const char* scenefile = "G:\\! _____ SYNC_WITH_SSD _____\\dragon_fix.obj"; // sc
 //const char* scenefile = "data/sponza_crytek.obj"; 
 
 // HDR environment
-const char* HDRmapname = "data/envmap2.hdr";
+// const char* HDRmapname = "data/envmap2.hdr";
+// const char* HDRmapname = "data/Etnies_Park_Center_1024.hdr";
 // const char* HDRmapname = "data/at_the_window2.hdr";
-// const char* HDRmapname = "data/sun.hdr";
+const char* HDRmapname = "data/sun.hdr";
 
 // const char* HDRmapname = "data/Topanga_Forest_B_3k.hdr"; //++++++++++
 //const char* HDRmapname = "data/ArboretumInBloom_Ref.hdr"; 
