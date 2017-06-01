@@ -19,6 +19,9 @@ Source code for original framework:
 
 Features:
 
+- Modded with SSS(PT & MIS BSSRDF)
+![](https://raw.githubusercontent.com/RNG65536/GPU-path-tracing-tutorial-4/master/1.jpg)
+
 - fast interactive path tracing
 - progressive rendering
 - interactive camera and depth-of-field
