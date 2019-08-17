@@ -14,47 +14,59 @@ include_directories(${GLEW_INCLUDE_DIR})
 include_directories(${GLUT_INCLUDE_DIR})
 include_directories(${OPENGL_INCLUDE_DIR})
 
-set(SOURCES
-    src/Array.h
+set(bvh_srcs
     src/BVH.h
     src/BVH.cpp
     src/BVHNode.h
     src/BVHNode.cpp
+    src/SplitBVHBuilder.h
+    src/SplitBVHBuilder.cpp
+)
+
+set(renderer_srcs
     src/Camera.h
     src/Camera.cpp
-    src/CudaBVH.h
-    src/CudaBVH.cpp
-    src/CudaRenderKernel.h
-    src/cutil_math.h
     src/Geometry.h
-    src/HDRloader.h
-    src/HDRloader.cpp
-    src/linear_math.h
-    src/main.cpp
-    src/MouseKeyboardInput.h
-    src/renderkernel.cuh
-    src/renderkernel.cu
-    src/resource.h
-    src/rgbe.h
-    src/rgbe.cpp
     src/Scene.h
     src/SceneLoader.h
     src/SceneLoader.cpp
-    src/Sort.h
-    src/Sort.cpp
-    src/SplitBVHBuilder.h
-    src/SplitBVHBuilder.cpp
     src/tonemap.cuh
     src/Util.h
     src/Util.cpp
+    src/CudaBVH.h
+    src/CudaBVH.cpp
+    src/CudaRenderKernel.h
+    src/renderkernel.cuh
+    src/renderkernel.cu
 )
 
-source_group("src\\" FILES ${SOURCES})
+set(utils_srcs
+    src/Array.h
+    src/cutil_math.h
+    src/linear_math.h
+    src/resource.h
+    src/HDRloader.h
+    src/HDRloader.cpp
+    src/MouseKeyboardInput.h
+    src/rgbe.h
+    src/rgbe.cpp
+    src/Sort.h
+    src/Sort.cpp
+)
+
+set(srcs
+    src/main.cpp
+)
+
+source_group("src\\bvh\\" FILES ${bvh_srcs})
+source_group("src\\renderer\\" FILES ${renderer_srcs})
+source_group("src\\utils\\" FILES ${utils_srcs})
+source_group("src\\" FILES ${srcs})
 
 add_compile_options("/Zi")
 add_link_options("/DEBUG")
 
-cuda_add_executable(tutorial4 ${SOURCES})
+cuda_add_executable(tutorial4 ${bvh_srcs} ${renderer_srcs} ${utils_srcs} ${srcs})
 
 target_link_libraries(tutorial4
     ${CUDA_LIBRARIES}

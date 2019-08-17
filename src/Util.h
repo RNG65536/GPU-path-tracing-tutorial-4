@@ -57,7 +57,6 @@ struct Clock {
   
 unsigned int WangHash(unsigned int a);
 
-// SAH configurations
 class Platform
 {
 public:
